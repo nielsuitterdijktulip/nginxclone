@@ -9,4 +9,6 @@ Build a simple TCP server using sockets. Use `socket()`, `bind()`, `listen()`, a
 
 # Step 3
 
-Add epoll for non-blocking I/O. Use `epoll_create1()`, `epoll_ctl()`, and `epoll_wait()` to monitor multiple file descriptors to see if I/O is possible on any of them.
+- Add epoll for non-blocking I/O. Use `epoll_create1()`, `epoll_ctl()`, and `epoll_wait()` to monitor multiple file descriptors to see if I/O is possible on any of them.
+- Read / write data to the client using `read()` and `write()` system calls.
+- Organised code into functions for better readability and maintainability.

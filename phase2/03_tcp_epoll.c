@@ -1,6 +1,7 @@
 // Massive perfomance difference with step 02 (~50x with hey 10k 50 concurrent)
 // Before, we did accept, read, write, close in one call before handling the next
 // Now, we accept, read, write, close, asynchronously, only doing those that are ready
+#include "01_client_state.h"
 
 #include <stdio.h> // Console output
 #include <stdlib.h> // for exit()
