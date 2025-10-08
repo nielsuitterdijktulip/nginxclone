@@ -10,12 +10,12 @@
 struct client {
     int fd;
     char read_buffer[READ_BUFFER_SIZE];
-    size_t read_buffer_size;
+    size_t read_len;
     char write_buffer[WRITE_BUFFER_SIZE];
-    size_t write_buffer_size;
+    size_t write_len;
     size_t write_offset;
-    int keepalive;
-}
+    int keep_alive;
+};
 
 struct client *client_create(int fd);
 void client_reset(struct client *c);

@@ -1,11 +1,12 @@
 // Massive perfomance difference with step 02 (~50x with hey 10k 50 concurrent)
 // Before, we did accept, read, write, close in one call before handling the next
 // Now, we accept, read, write, close, asynchronously, only doing those that are ready
-#include "01_client_state.h"
+#include "client.h"
+#include "client.c"
 
 #include <stdio.h> // Console output
 #include <stdlib.h> // for exit()
-#include <string.h> // for memset()
+#include <string.h> // for memset(), memcpy(), strlen()
 #include <unistd.h> // for close()
 #include <arpa/inet.h> // for sockaddr_in, htons, inet_addr
 #include <sys/epoll.h> // For epoll APIs
@@ -62,56 +63,42 @@ int accept_new_client(int listen_fd, int epoll_fd) {
         }
         return -1;
     }
-
-    // Makes new client fd non-blocking
-    make_nonblocking(client_fd);
+    
+    struct client *c = client_create(client_fd);
+    make_nonblocking(c->fd);
 
     struct epoll_event event;
-    // EPOLLIN notifies so long as data is unread
-    // EPOLLET notifies only once 
-    event.events = EPOLLIN | EPOLLET; 
-    event.data.fd = client_fd;
-    if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client_fd, &event) == -1) {
+    event.events = EPOLLIN | EPOLLET;
+    event.data.ptr = c;
+
+    if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, c.fd, &event) == -1) {
         perror("epoll_ctl: client_fd");
-        close(client_fd);
+        client_free(c);
         return -1;
     }
 
     printf("Accepted new connection: fd %d\n", client_fd);
     return client_fd;
 }
-void handle_client(int client_fd) {
+void handle_client(struct client *c) {
     // We read here all as we have EPOLLET set
     char buffer[1024];
     while (1) {
-        // read(int fd, void buf[count], size_t count) -- attempts to read up to count bytes from fd into the buffer starting at buf. 
-        ssize_t count = read(client_fd, buffer, sizeof(buffer));
+        // read(int fd, void buf[count], size_t count) -- attempts to read up to count bytes from fd into the buffer starting at buf.
+        ssize_t count = read(c->fd, buffer, sizeof(buffer));
         if (count == -1) {
             if (errno != EAGAIN && errno != EWOULDBLOCK) {
                 perror("read");
-                close(client_fd);
+                client_free(c);
             }
             break;
         } else if (count == 0) {
-            printf("Client fd %d disconnected\n", client_fd);
-            close(client_fd);
+            printf("Client fd %d disconnected\n", c->fd);
+            client_free(c);
             break;
         }
 
-        // Echo back data
-        ssize_t written = 0;
-        while (written < count) {
-            // write(int fd, const void buf[count], size_t count) -- writes up to count bytes from the buffer starting at buf. 
-            ssize_t w = write(client_fd, buffer + written, count - written);
-            if (w == -1) {
-                if (errno != EAGAIN && errno != EWOULDBLOCK) {
-                    perror("write");
-                    close(client_fd);
-                }
-                break;
-            }
-            written += w;
-        }
+        // Prepare HTTP response in write buffer
         const char *response =
             "HTTP/1.1 200 OK\r\n"
             "Content-Type: text/plain\r\n"
@@ -119,7 +106,26 @@ void handle_client(int client_fd) {
             "\r\n"
             "Hello from server\n";
 
-        write(client_fd, response, strlen(response));
+        size_t response_len = strlen(response);
+        if (response_len <= WRITE_BUFFER_SIZE) {
+            // Memory Copy - Copies response to write buffer
+            memcpy(c->write_buffer, response, response_len);
+            c->write_len = response_len;
+            c->write_offset = 0;
+
+            // Write response from buffer
+            while (c->write_offset < c->write_len) {
+                ssize_t w = write(c->fd, c->write_buffer + c->write_offset, c->write_len - c->write_offset);
+                if (w == -1) {
+                    if (errno != EAGAIN && errno != EWOULDBLOCK) {
+                        perror("write");
+                        client_free(c);
+                    }
+                    break;
+                }
+                c->write_offset += w;
+            }
+        }
     }
 }
 
@@ -147,7 +153,7 @@ void run_event_loop(int listen_fd) {
                 // Accept all incoming connections
                 while (accept_new_client(listen_fd, epfd) != -1) {}
             } else {
-                handle_client(events[i].data.fd);
+                handle_client((struct client*)events[i].data.ptr);
             }
         }
     }
